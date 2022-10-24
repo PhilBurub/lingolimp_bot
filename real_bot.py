@@ -1,4 +1,5 @@
 import flask
+import json
 import telebot
 import prettytable as pt
 from telebot import types
@@ -16,6 +17,7 @@ app = flask.Flask(__name__)
 
 ol = Olymp(bot)
 callmessage = {}
+callnumber = {}
 adressed = []
 
 
@@ -115,7 +117,7 @@ def send_message(message):
 
 
 @bot.message_handler(func=lambda message: True if message.chat.id in ol.participants.keys() and ol.active and
-                                ol.participants[message.chat.id]['isready'] and message.text == '/request' else False)
+                                ol.participants[message.chat.id]['isready'] == True and message.text == '/request' else False)
 def interface(message):
     keyboard = types.InlineKeyboardMarkup(row_width=3)
     for number, ev in ol.participants[message.chat.id]['marks'].items():
@@ -125,28 +127,64 @@ def interface(message):
     callmessage[message.chat.id] = bot.send_message(message.chat.id, "Какую задачу хотите сдать?",
                                                     reply_markup=keyboard).message_id
 
-    @bot.callback_query_handler(func=lambda call: True if call.message.chat.id in ol.participants.keys() and
+@bot.callback_query_handler(func=lambda call: True if call.message.chat.id in ol.participants.keys() and
                                                           int(call.data) in range(1, 13) else False)
-    def process(call):
-        global callmessage
-        number = int(call.data)
+def process(call):
+    global callmessage
+    number = int(call.data)
+    callnumber[call.message.chat.id] = number
+    if callmessage[call.message.chat.id] != '':
         bot.delete_message(call.message.chat.id, callmessage[call.message.chat.id])
-        bot.send_message(call.message.chat.id, f'Запрос сдать задачу {number} принят.')
-        ol.moder_wait()
-        ol.request(ol.participants[call.message.chat.id]['name'], ol.participants[call.message.chat.id]['grade'],
-                                                                                        number, call.message.chat.id)
-        return
-    return
+        callmessage[call.message.chat.id] = ''
+    keyboard = types.ReplyKeyboardMarkup()
+    yes = types.KeyboardButton('Да')
+    no = types.KeyboardButton('Нет')
+    keyboard.row(yes, no)
+    message = bot.send_message(call.message.chat.id, f'Вы точно хотите отправить запрос сдать задачу {number}?',
+                        reply_markup=keyboard)
+    bot.register_next_step_handler(message, send_request)
 
+def send_request(message):
+    number = callnumber[message.chat.id]
+    if message.text.lower() == 'да':
+        bot.send_message(message.chat.id, f'Запрос сдать задачу {number} принят.',
+                                    reply_markup=types.ReplyKeyboardRemove())
+        ol.moder_wait()
+        ol.request(ol.participants[message.chat.id]['name'], ol.participants[message.chat.id]['grade'],
+                                                                                        number, message.chat.id)
+    else:
+        bot.send_message(message.chat.id, 'Чтобы сдать другую задачу, отправьте команду /request и выберите номер.',
+                                    reply_markup=types.ReplyKeyboardRemove())
+
+@bot.message_handler(func=lambda message: True if message.chat.id in ol.participants.keys() and ol.active and
+                                ol.participants[message.chat.id]['isready'] == 'SEARCH' and message.text == '/leavewaitinglist' else False)
+def leavewo(message):
+    ol.leave_waiting_list(message.chat.id)
+    bot.send_message(message.chat.id, 'Когда будете готовы сдать какую-либо задачу, напишите /request')
 
 @bot.message_handler(func=lambda message: True if message.chat.id in ol.tutors.keys()
-                                                  and message.text == '/free' else False)
+                                and ol.tutors[message.chat.id]['isready'] == False
+                                and ol.tutors[message.chat.id]['last']['id'] == None
+                                and message.text == '/free' else False)
 def free_tutor(message):
     ol.tutors[message.chat.id]['isready'] = True
-    bot.send_message(message.chat.id, 'Ожидайте следующего участника.')
+    with open('/home/pburub/mysite/tutors.json', 'w', encoding='utf-8') as f:
+        json.dump(ol.tutors, f, ensure_ascii=False, indent='\t')
+    bot.send_message(message.chat.id, 'Ожидайте следующего участника. Чтобы изменить статус на '
+                                        '"Занят", отправьте /unfree.')
     ol.moder_wait()
     return
 
+@bot.message_handler(func=lambda message: True if message.chat.id in ol.tutors.keys()
+                                and ol.tutors[message.chat.id]['isready'] == True
+                                and ol.tutors[message.chat.id]['last']['id'] == None
+                                and message.text == '/unfree' else False)
+def free_tutor(message):
+    ol.tutors[message.chat.id]['isready'] = False
+    with open('/home/pburub/mysite/tutors.json', 'w', encoding='utf-8') as f:
+        json.dump(ol.tutors, f, ensure_ascii=False, indent='\t')
+    bot.send_message(message.chat.id, 'Чтобы продолжить оценивать участников, напишите /free.')
+    return
 
 @app.route(WEBHOOK_URL_PATH, methods=['POST'])
 def webhook():

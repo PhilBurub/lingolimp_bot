@@ -62,7 +62,7 @@ class Olymp: # класс, в котором хранится всё-всё-вс
                                                      'marks': dict((i, 0) for i in range(1, 10)), 'isready': True}
                 else:
                     self.participants[participant[2]] = {'name': participant[0], 'grade': int(participant[1]),
-                                                     'marks': dict((i, 0) for i in range(4, 13)), 'isready': True}
+                                                     'marks': dict((i, 0) for i in (4,5,6,8,9,10,11,12,13)), 'isready': True}
 
         if os.path.exists('/home/pburub/mysite/waiting_list.json'): # проверяем, есть ли уже файл, регистрирующий состояние списка ожидания
             # если да, то берём информацию о списке ожидания из него и понимаем, что это не первый запуск олимпиады (то есть, бот до этого упал)
@@ -85,9 +85,9 @@ class Olymp: # класс, в котором хранится всё-всё-вс
         self.active = True # смена статуса на активный
         for part_id in self.participants.keys(): # сообщение участникам
             self.bot.send_message(part_id, r'Олимпиада началась! Чтобы сдать задачу, отправьте команду /request '
-                                                  r'и выберите номер.')
+                                                  r'и выберите номер')
         for tutor_id in self.tutors.keys(): # сообщение проверяющим
-            self.bot.send_message(tutor_id, r'Олимпиада началась! Начать принимать задачи, отправьте команду /free.')
+            self.bot.send_message(tutor_id, r'Олимпиада началась! Начать принимать задачи, отправьте команду /free')
 
     def deactivate(self): # функция деактиивации олимпиады
         self.active = False
@@ -128,17 +128,18 @@ class Olymp: # класс, в котором хранится всё-всё-вс
         if message.text in ['Зачтено', 'Не зачтено', 'Участник не пришёл']: # если была начата одна из кнопок, то оценка записывается
             id_part = self.tutors[message.chat.id]['last']['id']
             number: int = self.tutors[message.chat.id]['last']['number']
+            button_num = self.conv_num(number, self.participants[id_part]['grade'])
             if message.text == 'Зачтено': # если зачтено - добавляем к результату 3, формируем сообщение, что зачтено
                 self.participants[id_part]['marks'][number] += 3
-                result = f'Ответ на задачу {number} засчитан, поздравляем!'
+                result = f'Ответ на задачу {button_num} засчитан, поздравляем!'
             elif message.text == 'Не зачтено': # если не зачтено - отнимаем от результата 1, формируем сообщение, сколько осталось попыток в зависимости от оценки в результатах
                 self.participants[id_part]['marks'][number] -= 1
                 if self.participants[id_part]['marks'][number] == -1:
-                    result = f'Ответ на задачу {number} не засчитан, попробуйте ещё! У вас есть еще 2 попытки'
+                    result = f'Ответ на задачу {button_num} не засчитан, попробуйте ещё! У вас есть еще 2 попытки'
                 elif self.participants[id_part]['marks'][number] == -2:
-                    result = f'Ответ на задачу {number} не засчитан, попробуйте ещё! У вас есть еще 1 попытка'
+                    result = f'Ответ на задачу {button_num} не засчитан, попробуйте ещё! У вас есть еще 1 попытка'
                 elif self.participants[id_part]['marks'][number] == -3:
-                    result = f'Ответ на задачу {number} не засчитан, это была последняя попытка, но ничего страшного:' \
+                    result = f'Ответ на задачу {button_num} не засчитан, это была последняя попытка, но ничего страшного:' \
                              f' с другими заданиями должно повезти больше!'
             elif message.text == 'Участник не пришёл': # если не пришёл, просто формируем сообщение, что участник не пришёл
                 result = 'Вы не пришли к проверяющему'
@@ -151,7 +152,10 @@ class Olymp: # класс, в котором хранится всё-всё-вс
             self.participants[id_part]['isready'] = True # выставляем статус на "готов"
             with open('/home/pburub/mysite/res.json', 'w', encoding='utf-8') as f: # обновляем информацию в файле с результатами
                 json.dump(self.participants, f, ensure_ascii=False, indent='\t')
-            self.bot.send_message(id_part, 'Когда будете готовы сдать какую-либо задачу, напишите /request') # сообщение участнику
+            if self.active:
+                self.bot.send_message(id_part, 'Когда будете готовы сдать какую-либо задачу, напишите /request') # сообщение участнику
+            else:
+                pass
         else:
             self.bot.send_message(message.chat.id, 'Вы ввели неверное значение. Пожалуйста, нажмите на одну из кнопок') # если кнопка нажата не была, заново просим нажать кнопку
             self.bot.register_next_step_handler(message, self.evaluate)
@@ -170,10 +174,11 @@ class Olymp: # класс, в котором хранится всё-всё-вс
                     json.dump(self.tutors, f, ensure_ascii=False, indent='\t')
                 self.bot.send_message(id_tutor, f'К вам идёт {self.participants[id_part]["name"]} из '
                                           f'{self.participants[id_part]["grade"]} класса '
-                                          f'для проверки задания {number}.') # сообщение проверяющему
+                                          f'для проверки задачи {number}') # сообщение проверяющему
+                button_num = self.conv_num(number, self.participants[id_part]['grade'])
                 self.bot.send_message(id_part,
-                                      f'Задачу {number} готов(а) у вас принять {tutor["name"]} по ссылке '
-                                      f'{tutor["link"]}.') # сообщение участнику
+                                      f'Задачу {button_num} готов(а) у вас принять {tutor["name"]} по ссылке '
+                                      f'{tutor["link"]}') # сообщение участнику
                 self.eval_process(id_tutor) # функция оценки ответа
                 return True
         return False
@@ -203,7 +208,7 @@ class Olymp: # класс, в котором хранится всё-всё-вс
         self.bot.send_message(id_part, 'К сожалению, свободных проверяющих пока что нет, ожидайте! '
                                         'Чтобы выйти из списка ожидания и попробовать сдать другую задачу, '
                                         'отправьте /leavewaitinglist, '
-                                        'но помните, что тогда место в очереди будет утрачено.') # сообщение участнику
+                                        'но помните, что тогда место в очереди будет утрачено') # сообщение участнику
         with open('/home/pburub/mysite/waiting_list.json', 'w', encoding='utf-8') as f: # обновление информации в файле со списком ожидания
             json.dump(self.waiting_list, f, ensure_ascii=False, indent='\t')
         return False
@@ -212,7 +217,14 @@ class Olymp: # класс, в котором хранится всё-всё-вс
         for waiter in self.waiting_list: # ищем участника в списке ожидания
             if waiter['id'] == id_part:
                 self.waiting_list.remove(waiter) # удаляем его
-                self.participants[id_part]['isready'] = True # выставляем статус "гото"
+                self.participants[id_part]['isready'] = True # выставляем статус "готов"
                 with open('/home/pburub/mysite/waiting_list.json', 'w', encoding='utf-8') as f: # обновляем информацию в файле со списком ожидания
                     json.dump(self.waiting_list, f, ensure_ascii=False, indent='\t')
                 break
+
+    def conv_num(self, num, grade):
+        if grade >= 10:
+            conv_num = str(num-4 if num>7 else num-3)
+        else:
+            conv_num = str(num)
+        return conv_num

@@ -19,6 +19,7 @@ ol = Olymp(bot) # подгружается класс Olimp из Olymper.py
 callmessage = {} # здесь хранятся сообщения бота, которые предлагают выбор задач (чтобы потом их можно было удалить)
 callnumber = {} # здесь хранится номер задачи, выбранный учатсником (чтобы его можно было передать другой функции)
 adressed = []  # здесь формируется список тех, кому адресовано сообщение модератора
+high_school_numbers = {4: '1', 5: '2', 6: '3', 8: '4', 9: '5', 10: '6', 11: '7', 12: '8', 13: '9'}
 
 
 @bot.message_handler(func=lambda message: True if message.chat.id in moderators.keys()
@@ -122,7 +123,8 @@ def interface(message):
     keyboard = types.InlineKeyboardMarkup(row_width=3) # создание клавиатуры
     for number, ev in ol.participants[message.chat.id]['marks'].items(): # смотрим, на доступные им задачи и оценки
         if -2 <= ev <= 0: # если оценка от -2 до 0, то эту задачу ещё можно сдать, тогда эта кнопка добавляется, иначе -- нет
-            keyboard.add(types.InlineKeyboardButton(str(number), callback_data=number))
+            button_num = ol.conv_num(number, ol.participants[message.chat.id]['grade'])
+            keyboard.add(types.InlineKeyboardButton(button_num, callback_data=number))
     global callmessage
     callmessage[message.chat.id] = bot.send_message(message.chat.id, "Какую задачу хотите сдать?",
                                                     reply_markup=keyboard).message_id # предлагаем участнику выбор, сохраняем сообщение, чтобы удалить
@@ -140,15 +142,17 @@ def process(call):
     yes = types.KeyboardButton('Да')
     no = types.KeyboardButton('Нет')
     keyboard.row(yes, no)
-    message = bot.send_message(call.message.chat.id, f'Вы точно хотите отправить запрос сдать задачу {number}?',
+    button_num = ol.conv_num(number, ol.participants[call.message.chat.id]['grade'])
+    message = bot.send_message(call.message.chat.id, f'Вы точно хотите отправить запрос сдать задачу {button_num}?',
                         reply_markup=keyboard) # уточняем, ту ли задачу имел в виду участник (с кнопками да/нет)
     bot.register_next_step_handler(message, send_request)
 
 def send_request(message): # обработка ответа да/нет
     number = callnumber[message.chat.id] # вспоминаем номер задачи
     if message.text.lower() == 'да': # если да, то отправляем запрос
-        bot.send_message(message.chat.id, f'Запрос сдать задачу {number} принят.',
-                                    reply_markup=types.ReplyKeyboardRemove())
+        button_num = ol.conv_num(number, ol.participants[message.chat.id]['grade'])
+        bot.send_message(message.chat.id, f'Запрос сдать задачу {button_num} принят.',
+                                                                            reply_markup=types.ReplyKeyboardRemove())
         ol.moder_wait() # сначала смотрим список ожидания
         ol.request(ol.participants[message.chat.id]['name'], ol.participants[message.chat.id]['grade'],
                                                                                         number, message.chat.id) # отправляем запрос в Olymper.py
@@ -171,7 +175,7 @@ def free_tutor(message):
     with open('/home/pburub/mysite/tutors.json', 'w', encoding='utf-8') as f: # сохраняю в файл изменённое состояние
         json.dump(ol.tutors, f, ensure_ascii=False, indent='\t')
     bot.send_message(message.chat.id, 'Ожидайте следующего участника. Чтобы изменить статус на '
-                                        '"Занят", отправьте /unfree.')
+                                        '"Занят", отправьте /unfree')
     ol.moder_wait() # проверяю список ожидания
     return
 
@@ -183,7 +187,7 @@ def unfree_tutor(message):
     ol.tutors[message.chat.id]['isready'] = False # меняю статус проверяющего
     with open('/home/pburub/mysite/tutors.json', 'w', encoding='utf-8') as f: # сохраняю в файл изменённое состояние
         json.dump(ol.tutors, f, ensure_ascii=False, indent='\t')
-    bot.send_message(message.chat.id, 'Чтобы продолжить оценивать участников, напишите /free.')
+    bot.send_message(message.chat.id, 'Чтобы продолжить оценивать участников, напишите /free')
     return
 
 @app.route(WEBHOOK_URL_PATH, methods=['POST']) # это тоже для работы на сервере

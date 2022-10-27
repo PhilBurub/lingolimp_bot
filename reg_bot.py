@@ -121,8 +121,8 @@ def get_link(message):
     global tutors_data
     tutors_data[message.chat.id]['link'] = message.text
     msg = bot.send_message(message.chat.id, 'Через запятую пришлите задачи, которые вы готовы принять,'
-                                            'от 1 до 12 (например, "1,2,3")',
-                           reply_markup=types.ReplyKeyboardRemove())
+                                            'от 1 до 13 \(например, `1,2,3`\)',
+                           reply_markup=types.ReplyKeyboardRemove(), parse_mode='MarkdownV2')
     bot.register_next_step_handler(msg, get_problems)
 
 

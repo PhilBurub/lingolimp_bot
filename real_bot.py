@@ -2,10 +2,13 @@ import flask
 import json
 import telebot
 import prettytable as pt
+import pandas as pd
 from telebot import types
+from io import BytesIO
 import conf
 from Olymper import Olymp
 from moderators import moderators
+from moderators import tasks
 
 WEBHOOK_URL_BASE = "https://{}:{}".format(conf.WEBHOOK_HOST, conf.WEBHOOK_PORT) # это для работы на сервере
 WEBHOOK_URL_PATH = "/{}/".format(conf.TOKEN)
@@ -19,7 +22,8 @@ ol = Olymp(bot) # подгружается класс Olimp из Olymper.py
 callmessage = {} # здесь хранятся сообщения бота, которые предлагают выбор задач (чтобы потом их можно было удалить)
 callnumber = {} # здесь хранится номер задачи, выбранный учатсником (чтобы его можно было передать другой функции)
 adressed = []  # здесь формируется список тех, кому адресовано сообщение модератора
-high_school_numbers = {4: '1', 5: '2', 6: '3', 8: '4', 9: '5', 10: '6', 11: '7', 12: '8', 13: '9'}
+changer_part = None
+
 
 
 @bot.message_handler(func=lambda message: True if message.chat.id in moderators.keys()
@@ -54,7 +58,10 @@ def send_waiting(message):
     table.align['Время'] = 'r'
     for waiter in ol.waiting_list: # подгружается информация из списка ожидания из Olymper.py
         table.add_row([waiter['name'], waiter['grade'], waiter['number'], waiter['time']])
-    bot.send_message(message.chat.id, f'<pre>{table}</pre>', parse_mode='HTML')
+    try:
+        bot.send_message(message.chat.id, f'<pre>{table}</pre>', parse_mode='HTML')
+    except:
+        bot.send_message(message.chat.id, 'Слишком много людей в списке...')
 
 
 @bot.message_handler(func=lambda message: True if message.chat.id in moderators.keys()
@@ -73,14 +80,24 @@ def send_tutors(message):
 
 
 @bot.message_handler(func=lambda message: True if message.chat.id in moderators.keys()
-                                                  and message.text == 'Посмотреть результаты' else False) # предоставление результатов модератору (аналогично)
+                                                  and message.text == 'Получить результаты' else False) # предоставление результатов модератору в Excel файле
 def results(message):
-    table = pt.PrettyTable(['Имя', 'Класс'] + [str(i) for i in range(1, 10)])
-    table.align['Имя'] = 'l'
-    table.align['Класс'] = 'l'
-    for part in ol.participants.values():
-        table.add_row([part['name'], part['grade']] + [i for i in part['marks'].values()])
-    bot.send_message(message.chat.id, f'<pre>{table}</pre>', parse_mode='HTML')
+    if len(ol.participants) > 0:
+        table = pd.DataFrame(data=ol.participants.values())
+        table_new = pd.DataFrame()
+        table_new['Имя'] = table['name']
+        table_new['Класс'] = table['grade']
+        table_new = pd.concat((table_new,
+                               pd.DataFrame(table['marks'].tolist())), axis=1)
+        wt = pd.ExcelWriter('/home/pburub/mysite/results.xlsx')
+        table_new.to_excel(wt, sheet_name='results', index=False)
+        wt.close()
+        with open('/home/pburub/mysite/results.xlsx', 'rb') as f:
+            obj = BytesIO(f.read())
+            obj.name = 'results.xlsx'
+            bot.send_document(message.chat.id, document=obj)
+    else:
+        bot.send_message(message.chat.id, 'Пусто...')
 
 
 @bot.message_handler(func=lambda message: True if message.chat.id in moderators.keys()
@@ -113,15 +130,207 @@ def sendtutors(message):
 def send_message(message): # собственно отправка сообщения тем, кто в списке адресатов
     global adressed
     for reciever in adressed:
-        bot.forward_message(reciever, message.chat.id, message.message_id)
+        try:
+            bot.forward_message(reciever, message.chat.id, message.message_id)
+        except:
+            pass
     bot.send_message(message.chat.id, 'Передали! ;)')
 
+@bot.message_handler(func=lambda message: True if message.chat.id in moderators.keys()
+                                                  and message.text == 'Изменить информацию об участнике' else False) # Изменение информации об участнике
+def change_participant(message):
+    bot.send_message(message.chat.id, 'Напишите id участника')
+    bot.register_next_step_handler(message, change_participant2)
+
+def change_participant2(message):
+    global changer_part
+    if message.text.isnumeric() and int(message.text) in ol.participants:
+        changer_part = int(message.text)
+        keyboard = types.ReplyKeyboardMarkup()
+        keyboard.row(types.KeyboardButton('Имя'), types.KeyboardButton('Класс'), types.KeyboardButton('Оценка'))
+        bot.send_message(message.chat.id, 'Что нужно изменить?', reply_markup=keyboard)
+        bot.register_next_step_handler(message, change_participant3)
+    elif message.text.isnumeric() and int(message.text) not in ol.participants:
+        bot.send_message(message.chat.id, 'Такого id среди участников нет')
+    else:
+        bot.send_message(message.chat.id, 'Что-то пошло не так(')
+
+def change_participant3(message):
+    global changer_part
+    if message.text == 'Имя':
+        bot.send_message(message.chat.id, 'Пришли новое имя')
+        bot.register_next_step_handler(message, change_participant_name)
+    elif message.text == 'Класс':
+        bot.send_message(message.chat.id, 'Пришли новый класс')
+        bot.register_next_step_handler(message, change_participant_grade)
+    elif message.text == 'Оценка':
+        bot.send_message(message.chat.id, 'Оценку для какой задачи нужно изменить?')
+        bot.register_next_step_handler(message, change_participant_task)
+    else:
+        bot.send_message(message.chat.id, 'Что-то пошло не так(')
+
+def change_participant_name(message):
+    global changer_part
+    ol.participants[changer_part]['name'] = message.text
+    bot.send_message(message.chat.id, 'Имя успешно изменено')
+    ol.save_part()
+
+def change_participant_grade(message):
+    global changer_part
+    if message.text.isnumeric():
+        grade = int(message.text)
+        ol.participants[changer_part]['grade'] = grade
+        if grade < 10:
+            for i in tasks['mid'].keys():
+                if i not in ol.participants[changer_part]['marks']:
+                    ol.participants[changer_part]['marks'][i] = 0
+        else:
+            for i in tasks['high'].keys():
+                if i not in ol.participants[changer_part]['marks']:
+                    ol.participants[changer_part]['marks'][i] = 0
+        bot.send_message(message.chat.id, 'Класс успешно изменён')
+        ol.save_part()
+    else:
+        bot.send_message(message.chat.id, 'Что-то пошло не так(')
+
+def change_participant_task(message):
+    global changer_part
+    if message.text.isnumeric():
+        changer_part = [changer_part, int(message.text)]
+        bot.send_message(message.chat.id, 'Какой балл нужно выставить за эту задачу?')
+        bot.register_next_step_handler(message, change_participant_task2)
+    else:
+        bot.send_message(message.chat.id, 'Что-то пошло не так(')
+
+def change_participant_task2(message):
+    global changer_part
+    if message.text.strip('-').isnumeric():
+        ol.participants[changer_part[0]]['marks'][changer_part[1]] = int(message.text)
+        bot.send_message(message.chat.id, 'Оценка успешно изменена')
+        ol.save_part()
+    else:
+        bot.send_message(message.chat.id, 'Что-то пошло не так(')
+
+@bot.message_handler(func=lambda message: True if message.chat.id in moderators.keys()
+                                                  and message.text == 'Добавить участника' else False) # Добавление участника
+def add_participant(message):
+    bot.send_message(message.chat.id, 'Пришлите через запятую id, имя и класс')
+    bot.register_next_step_handler(message, add_participant2)
+
+def add_participant2(message):
+    info = message.text.split(',')
+    if len(info) == 3:
+        info[0] = info[0].strip(' ')
+        info[1] = info[1].strip(' ')
+        info[2] = info[2].strip(' ')
+        if info[0].isnumeric() and info[2].isnumeric():
+            part_id = int(info[0])
+            part_name = info[1]
+            part_grade = int(info[2])
+            if part_grade < 10:
+                part_tasks = {i:0 for i in tasks['mid']}
+            else:
+                part_tasks = {i:0 for i in tasks['high']}
+            ol.participants[part_id] = {'name': part_name, 'grade': part_grade, 'marks': part_tasks, 'isready': True}
+            bot.send_message(message.chat.id, 'Участник успешно добавлен')
+            ol.save_part()
+        else:
+           bot.send_message(message.chat.id, 'Что-то пошло не так(')
+    else:
+        bot.send_message(message.chat.id, 'Что-то пошло не так(')
+
+@bot.message_handler(func=lambda message: True if message.chat.id in moderators.keys()
+                                                  and message.text == 'Изменить информацию о проверяющем' else False) # Изменение информации о проверяющем
+def change_tutor(message):
+    bot.send_message(message.chat.id, 'Напишите id проверяющего')
+    bot.register_next_step_handler(message, change_tutor2)
+
+def change_tutor2(message):
+    global changer_part
+    if message.text.isnumeric() and int(message.text) in ol.tutors:
+        changer_part = int(message.text)
+        keyboard = types.ReplyKeyboardMarkup()
+        keyboard.row(types.KeyboardButton('Имя'), types.KeyboardButton('Ссылка'), types.KeyboardButton('Задачи'))
+        bot.send_message(message.chat.id, 'Что нужно изменить?', reply_markup=keyboard)
+        bot.register_next_step_handler(message, change_tutor3)
+    elif message.text.isnumeric() and int(message.text) not in ol.tutors:
+        bot.send_message(message.chat.id, 'Такого id нет среди проверяющих')
+    else:
+        bot.send_message(message.chat.id, 'Что-то пошло не так(')
+
+def change_tutor3(message):
+    global changer_part
+    if message.text == 'Имя':
+        bot.send_message(message.chat.id, 'Пришли новое имя')
+        bot.register_next_step_handler(message, change_tutor_name)
+    elif message.text == 'Ссылка':
+        bot.send_message(message.chat.id, 'Пришли новую ссылку')
+        bot.register_next_step_handler(message, change_tutor_link)
+    elif message.text == 'Задачи':
+        bot.send_message(message.chat.id, 'Пришли список задач через запятую')
+        bot.register_next_step_handler(message, change_tutor_tasks)
+    else:
+        bot.send_message(message.chat.id, 'Что-то пошло не так(')
+
+def change_tutor_name(message):
+    global changer_part
+    ol.tutors[changer_part]['name'] = message.text
+    bot.send_message(message.chat.id, 'Имя успешно изменено')
+    ol.save_tutors()
+
+def change_tutor_link(message):
+    global changer_part
+    ol.tutors[changer_part]['link'] = message.text
+    bot.send_message(message.chat.id, 'Ссылка успешно изменена')
+    ol.save_tutors()
+
+def change_tutor_tasks(message):
+    global changer_part
+    if message.text.replace(' ', '').replace(',', '').isnumeric():
+        tutor_tasks = list(map(int, message.text.replace(' ', '').split(',')))
+        ol.tutors[changer_part]['numbers'] = tutor_tasks
+        bot.send_message(message.chat.id, 'Список задач успешно изменён')
+        ol.save_tutors()
+
+@bot.message_handler(func=lambda message: True if message.chat.id in moderators.keys()
+                                                  and message.text == 'Добавить проверяющего' else False) # Добавление проверяющего
+def add_tutor(message):
+    bot.send_message(message.chat.id, 'Пришлите через запятую id и имя')
+    bot.register_next_step_handler(message, add_tutor2)
+
+def add_tutor2(message):
+    global changer_part
+    info = message.text.replace(' ', '').split(',')
+    if len(info) == 2 and info[0].isnumeric():
+        changer_part = [int(info[0]), info[1]]
+        bot.send_message(message.chat.id, 'Пришлите ссылку')
+        bot.register_next_step_handler(message, add_tutor3)
+    else:
+        bot.send_message(message.chat.id, 'Что-то пошло не так(')
+
+def add_tutor3(message):
+    global changer_part
+    changer_part.append(message.text)
+    bot.send_message(message.chat.id, 'Пришлите через запятую задачи')
+    bot.register_next_step_handler(message, add_tutor4)
+
+def add_tutor4(message):
+    global changer_part
+    if message.text.replace(' ', '').replace(',', '').isnumeric():
+        tutor_tasks = list(map(int, message.text.replace(' ', '').split(',')))
+        ol.tutors[changer_part[0]] = {'name': changer_part[1], 'link': changer_part[2], 'numbers': tutor_tasks, 'isready': False,
+                                               'last': {'id': None, 'number': None}}
+        bot.send_message(message.chat.id, 'Проверяющий успешно добавлен')
+        ol.save_tutors()
+    else:
+        bot.send_message(message.chat.id, 'Что-то пошло не так(')
 
 @bot.message_handler(func=lambda message: True if message.chat.id in ol.participants.keys() and ol.active and
                                 ol.participants[message.chat.id]['isready'] == True and message.text == '/request' else False) # запрос от участников
 def interface(message):
     keyboard = types.InlineKeyboardMarkup(row_width=3) # создание клавиатуры
-    for number, ev in ol.participants[message.chat.id]['marks'].items(): # смотрим, на доступные им задачи и оценки
+    dct_items = ol.participants[message.chat.id]['marks'].items()
+    for number, ev in sorted(dct_items, key=lambda x: x[0]): # смотрим, на доступные им задачи и оценки
         if -2 <= ev <= 0: # если оценка от -2 до 0, то эту задачу ещё можно сдать, тогда эта кнопка добавляется, иначе -- нет
             button_num = ol.conv_num(number, ol.participants[message.chat.id]['grade'])
             keyboard.add(types.InlineKeyboardButton(button_num, callback_data=number))
@@ -130,14 +339,17 @@ def interface(message):
                                                     reply_markup=keyboard).message_id # предлагаем участнику выбор, сохраняем сообщение, чтобы удалить
 
 @bot.callback_query_handler(func=lambda call: True if call.message.chat.id in ol.participants.keys() and
-                                                          int(call.data) in range(1, 13) else False) # обработка выбора
+                                                          int(call.data) in range(1, 14) else False) # обработка выбора
 def process(call):
     global callmessage
     number = int(call.data)
     callnumber[call.message.chat.id] = number # сохраняем выбранный номер
-    if callmessage[call.message.chat.id] != '':
-        bot.delete_message(call.message.chat.id, callmessage[call.message.chat.id]) # удаляем сообщение с кнопками выбора
-        callmessage[call.message.chat.id] = ''
+    try:
+        if callmessage[call.message.chat.id] != '':
+            bot.delete_message(call.message.chat.id, callmessage[call.message.chat.id]) # удаляем сообщение с кнопками выбора
+            callmessage[call.message.chat.id] = ''
+    except:
+        pass
     keyboard = types.ReplyKeyboardMarkup()
     yes = types.KeyboardButton('Да')
     no = types.KeyboardButton('Нет')

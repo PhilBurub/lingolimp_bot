@@ -5,6 +5,7 @@ from telebot import types
 from datetime import datetime
 from datetime import timezone
 from datetime import timedelta
+from moderators import tasks as grade_task
 
 tz = timezone(timedelta(hours=3))
 
@@ -59,10 +60,10 @@ class Olymp: # класс, в котором хранится всё-всё-вс
             for participant in cur.fetchall():
                 if int(participant[1]) < 10:
                     self.participants[participant[2]] = {'name': participant[0], 'grade': int(participant[1]),
-                                                     'marks': dict((i, 0) for i in range(1, 10)), 'isready': True}
+                                                     'marks': dict((i, 0) for i in grade_task['mid'].keys()), 'isready': True}
                 else:
                     self.participants[participant[2]] = {'name': participant[0], 'grade': int(participant[1]),
-                                                     'marks': dict((i, 0) for i in (4,5,6,8,9,10,11,12,13)), 'isready': True}
+                                                     'marks': dict((i, 0) for i in grade_task['high'].keys()), 'isready': True}
 
         if os.path.exists('/home/pburub/mysite/waiting_list.json'): # проверяем, есть ли уже файл, регистрирующий состояние списка ожидания
             # если да, то берём информацию о списке ожидания из него и понимаем, что это не первый запуск олимпиады (то есть, бот до этого упал)
@@ -84,16 +85,22 @@ class Olymp: # класс, в котором хранится всё-всё-вс
     def activate(self): # функция актиивации олимпиады
         self.active = True # смена статуса на активный
         for part_id in self.participants.keys(): # сообщение участникам
-            self.bot.send_message(part_id, r'Олимпиада началась! Чтобы сдать задачу, отправьте команду /request '
+            try:
+                self.bot.send_message(part_id, r'Олимпиада началась! Чтобы сдать задачу, отправьте команду /request '
                                                   r'и выберите номер')
+            except:
+                pass
         for tutor_id in self.tutors.keys(): # сообщение проверяющим
             self.bot.send_message(tutor_id, r'Олимпиада началась! Начать принимать задачи, отправьте команду /free')
 
     def deactivate(self): # функция деактиивации олимпиады
         self.active = False
         for part_id in self.participants.keys(): # сообщение участникам
-            self.bot.send_message(part_id, r'Олимпиада завершена. Вы больше не можете отправить запрос сдать задачу, '
+            try:
+                self.bot.send_message(part_id, r'Олимпиада завершена. Вы больше не можете отправить запрос сдать задачу, '
                                            r'но мы продолжаем работать со списком ожидания. Спасибо за участие!')
+            except:
+                pass
         for tutor_id in self.tutors.keys(): # сообщение проверяющим
             self.bot.send_message(tutor_id, r'Олимпиада завершена, но мы продолжаем работать со списком ожидания. '
                                             r'Если к вам больше никто не идёт, значит, поздравляем с успешным '
@@ -110,11 +117,17 @@ class Olymp: # класс, в котором хранится всё-всё-вс
         send_a_button = types.KeyboardButton('только сдающим')
         waiting_button = types.KeyboardButton('Список ожидания')
         tutors_stat_button = types.KeyboardButton('Статусы проверяющих')
-        marks_button = types.KeyboardButton('Посмотреть результаты')
+        marks_button = types.KeyboardButton('Получить результаты')
+        part_ch_button = types.KeyboardButton('Изменить информацию об участнике')
+        part_add_button = types.KeyboardButton('Добавить участника')
+        tutor_ch_button = types.KeyboardButton('Изменить информацию о проверяющем')
+        tutor_add_button = types.KeyboardButton('Добавить проверяющего')
         keyboard.row(send_button)
         keyboard.row(send_p_button, send_a_button)
         keyboard.row(waiting_button, tutors_stat_button, marks_button)
         keyboard.row(act_button)
+        keyboard.row(part_ch_button, part_add_button)
+        keyboard.row(tutor_ch_button, tutor_add_button)
         return keyboard # возвращаем клавиатуру со всеми кнопками
 
     def eval_process(self, id_tutor): # функция оценки ответа
@@ -146,12 +159,10 @@ class Olymp: # класс, в котором хранится всё-всё-вс
             self.bot.send_message(message.chat.id, 'Оценка записана. Чтобы продолжить оценивать участников, '
                                                    'напишите /free', reply_markup=types.ReplyKeyboardRemove()) # сообщение проверяющему
             self.tutors[message.chat.id]['last'] = {'id': None, 'number': None} # удаляем информацию о текущем участнике
-            with open('/home/pburub/mysite/tutors.json', 'w', encoding='utf-8') as f: # обновляем информацию в файле с проверяющими
-                json.dump(self.tutors, f, ensure_ascii=False, indent='\t')
+            self.save_tutors() # обновляем информацию в файле с проверяющими
             self.bot.send_message(id_part, result) # отправляем участнику сообщение с результатом
             self.participants[id_part]['isready'] = True # выставляем статус на "готов"
-            with open('/home/pburub/mysite/res.json', 'w', encoding='utf-8') as f: # обновляем информацию в файле с результатами
-                json.dump(self.participants, f, ensure_ascii=False, indent='\t')
+            self.save_part() # обновляем информацию в файле с результатами
             if self.active:
                 self.bot.send_message(id_part, 'Когда будете готовы сдать какую-либо задачу, напишите /request') # сообщение участнику
             else:
@@ -159,6 +170,14 @@ class Olymp: # класс, в котором хранится всё-всё-вс
         else:
             self.bot.send_message(message.chat.id, 'Вы ввели неверное значение. Пожалуйста, нажмите на одну из кнопок') # если кнопка нажата не была, заново просим нажать кнопку
             self.bot.register_next_step_handler(message, self.evaluate)
+
+    def save_part(self):
+        with open('/home/pburub/mysite/res.json', 'w', encoding='utf-8') as f: # обновляем информацию в файле с результатами
+            json.dump(self.participants, f, ensure_ascii=False, indent='\t')
+
+    def save_tutors(self):
+        with open('/home/pburub/mysite/tutors.json', 'w', encoding='utf-8') as f: # обновляем информацию в файле с проверяющими
+            json.dump(self.tutors, f, ensure_ascii=False, indent='\t')
 
     def find(self, number, id_part): # функция поиска подходящего проверяющего
         for id_tutor, tutor in self.tutors.items(): # просматриваем список с проверяющими
@@ -170,8 +189,7 @@ class Olymp: # класс, в котором хранится всё-всё-вс
                 tutor['isready'] = False # выставляем статус проверяющего "занят"
                 tutor['last']['id'] = id_part # вносим информацию о текущем учатнике в словарь проверяющего
                 tutor['last']['number'] = number
-                with open('/home/pburub/mysite/tutors.json', 'w', encoding='utf-8') as f: # фиксируем в файле с проверяющими
-                    json.dump(self.tutors, f, ensure_ascii=False, indent='\t')
+                self.save_tutors() # фиксируем в файле с проверяющими
                 self.bot.send_message(id_tutor, f'К вам идёт {self.participants[id_part]["name"]} из '
                                           f'{self.participants[id_part]["grade"]} класса '
                                           f'для проверки задачи {number}') # сообщение проверяющему
@@ -224,7 +242,13 @@ class Olymp: # класс, в котором хранится всё-всё-вс
 
     def conv_num(self, num, grade):
         if grade >= 10:
-            conv_num = str(num-4 if num>7 else num-3)
+            if num in grade_task['high']:
+                conv_num = grade_task['high'].get(num)
+            else:
+                conv_num = grade_task['mid'].get(num) + ' (средняя школа)'
         else:
-            conv_num = str(num)
+            if num in grade_task['mid']:
+                conv_num = grade_task['mid'].get(num)
+            else:
+                conv_num = grade_task['high'].get(num) + ' (старшая школа)'
         return conv_num

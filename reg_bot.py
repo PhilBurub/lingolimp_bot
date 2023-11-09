@@ -168,7 +168,7 @@ def part2db(message):
                                       'grade': int(participants_table["grades"].values[idx])}
     else:
         bot.send_message(message.chat.id, 'Кажется, в таблице указано иначе или же Вы не зарегистрированы. '
-                                          'Пожалуйста, обратитесь к организаторам. По всем вопросам пишите Кате @matyukhan')
+                                          'Пожалуйста, обратитесь к организаторам. По всем вопросам пишите Филе @leafbur или Лизе @saemari')
 
 
 def part_finish(message):
@@ -183,7 +183,7 @@ def part_finish(message):
         bot.send_message(message.chat.id, 'Вы успешно зарегистрировались!', reply_markup=types.ReplyKeyboardRemove())
     else:
         bot.send_message(message.chat.id, 'Что-то пошло не так. Пожалуйста, обратитесь к '
-                                          'организаторам. По всем вопросам пишите Кате @matyukhan', reply_markup=types.ReplyKeyboardRemove())
+                                          'организаторам. По всем вопросам пишите Филе @leafbur или Лизе @saemari', reply_markup=types.ReplyKeyboardRemove())
 
 
 @app.route(WEBHOOK_URL_PATH, methods=['POST'])
